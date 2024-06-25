@@ -1,0 +1,115 @@
+import pandas as pd
+import numpy as np
+import ta
+import matplotlib.pyplot as plt
+
+def generate_simulated_data(start_date, end_date):
+    dates = pd.date_range(start=start_date, end=end_date)
+    price_changes = np.random.normal(0, 1, len(dates))
+    prices = 100 + np.cumsum(price_changes)
+
+    data = pd.DataFrame({
+        'date': dates,
+        'close': prices,
+        'high': prices + np.random.normal(1, 1, len(dates)),
+        'low': prices - np.random.normal(1, 1, len(dates))
+    })
+    data.set_index('date', inplace=True)
+    return data
+
+def calculate_indicators(data):
+    # 计算布林通道
+    data['bollinger_hband'] = ta.volatility.BollingerBands(close=data['close']).bollinger_hband()
+    data['bollinger_lband'] = ta.volatility.BollingerBands(close=data['close']).bollinger_lband()
+    data['bollinger_mavg'] = ta.volatility.BollingerBands(close=data['close']).bollinger_mavg()
+
+    # 计算KD指標
+    data['stoch_k'] = ta.momentum.StochasticOscillator(high=data['high'], low=data['low'], close=data['close']).stoch()
+    data['stoch_d'] = ta.momentum.StochasticOscillator(high=data['high'], low=data['low'], close=data['close']).stoch_signal()
+
+    # 计算MACD
+    data['macd'] = ta.trend.MACD(close=data['close']).macd()
+    data['macd_signal'] = ta.trend.MACD(close=data['close']).macd_signal()
+    
+    return data
+
+def generate_signals(data):
+    buy_signals = []
+    sell_signals = []
+    buy_price = 0
+    profits = []
+    profit_dates = []
+
+    for i in range(len(data)):
+        if (data['close'].iloc[i] < data['bollinger_lband'].iloc[i] and
+            data['stoch_k'].iloc[i] < 10 and
+            data['macd'].iloc[i] < 0):
+            buy_signals.append(data['close'].iloc[i])
+            sell_signals.append(np.nan)
+            buy_price = data['close'].iloc[i]
+        elif (data['close'].iloc[i] > data['bollinger_hband'].iloc[i] and
+              data['stoch_k'].iloc[i] > 80 and
+              data['macd'].iloc[i] > data['macd_signal'].iloc[i]):
+            buy_signals.append(np.nan)
+            sell_signals.append(data['close'].iloc[i])
+            if buy_price > 0:
+                profit = (data['close'].iloc[i] - buy_price) / buy_price * 100
+                profits.append(profit)
+                profit_dates.append(data.index[i])
+                buy_price = 0  # Reset buy price after selling
+        else:
+            buy_signals.append(np.nan)
+            sell_signals.append(np.nan)
+    
+    return buy_signals, sell_signals, profits, profit_dates
+
+def plot_results(data, profit_data, title):
+    # 绘制结果
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(14, 18), sharex=True)
+
+    # 绘制价格和布林通道
+    ax1.plot(data['close'], label='Close Price', color='blue')
+    ax1.plot(data['bollinger_hband'], label='Bollinger High Band', color='red')
+    ax1.plot(data['bollinger_lband'], label='Bollinger Low Band', color='green')
+    ax1.scatter(data.index, data['buy_signal'], label='Buy Signal', marker='^', color='green', alpha=1)
+    ax1.scatter(data.index, data['sell_signal'], label='Sell Signal', marker='v', color='red', alpha=1)
+    ax1.set_title(f'Stock Price with Bollinger Bands ({title})')
+    ax1.set_ylabel('Price')
+    ax1.legend()
+
+    # 绘制KD指标
+    ax2.plot(data['stoch_k'], label='%K', color='blue')
+    ax2.plot(data['stoch_d'], label='%D', color='orange')
+    ax2.axhline(10, linestyle='--', alpha=0.5, color='red')
+    ax2.axhline(80, linestyle='--', alpha=0.5, color='green')
+    ax2.set_title('Stochastic Oscillator (KD)')
+    ax2.set_ylabel('Value')
+    ax2.legend()
+
+    # 绘制MACD
+    ax3.plot(data['macd'], label='MACD', color='blue')
+    ax3.plot(data['macd_signal'], label='Signal Line', color='orange')
+    ax3.axhline(0, linestyle='--', alpha=0.5, color='black')
+    ax3.set_title('MACD')
+    ax3.set_ylabel('Value')
+    ax3.legend()
+
+    # 绘制获利百分比
+    ax4.bar(profit_data['date'], profit_data['profit'], color='purple')
+    ax4.set_title('Profit Percentage per Trade')
+    ax4.set_ylabel('Profit %')
+    ax4.set_xlabel('Date')
+
+    plt.show()
+
+# 生成从2022-01-01到2024-04-01的模拟股价数据并应用相同的交易策略
+data = generate_simulated_data('2022-01-01', '2024-04-01')
+data = calculate_indicators(data)
+data['buy_signal'], data['sell_signal'], profits, profit_dates = generate_signals(data)
+
+# 创建一个 DataFrame 来存储利润和相应的日期
+profit_data = pd.DataFrame({'date': profit_dates, 'profit': profits})
+
+plot_results(data, profit_data, 'From 2022-01-01 to 2024-04-01')
+print(f'Profits: {profits}')
+print(f'Average Profit: {np.mean(profits) if profits else 0:.2f}%')
