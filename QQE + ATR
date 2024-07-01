@@ -1,0 +1,100 @@
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+def calculate_qqe(data, rsi_period=14, atr_period=14, smooth_factor=5):
+    # 計算RSI
+    delta = data['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=rsi_period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=rsi_period).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+
+    # 計算ATR
+    tr1 = data['High'] - data['Low']
+    tr2 = abs(data['High'] - data['Close'].shift())
+    tr3 = abs(data['Low'] - data['Close'].shift())
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.rolling(window=atr_period).mean()
+
+    # 平滑RSI
+    smoothed_rsi = rsi.ewm(span=smooth_factor).mean()
+
+    # 計算觸發線
+    trigger = smoothed_rsi.ewm(span=smooth_factor).mean()
+
+    # 返回結果
+    data['RSI'] = rsi
+    data['Smoothed_RSI'] = smoothed_rsi
+    data['Trigger'] = trigger
+    data['ATR'] = atr
+    return data
+
+# 獲取狗狗幣數據
+doge_data = yf.download('DOGE-USD', start='2022-07-01', end='2024-07-01')
+
+# 計算QQE指標
+qqe_data = calculate_qqe(doge_data)
+
+# 定義買入和賣出信號
+buy_signals = (qqe_data['Smoothed_RSI'] > qqe_data['Trigger']) & (qqe_data['Smoothed_RSI'].shift(1) <= qqe_data['Trigger'].shift(1))
+sell_signals = (qqe_data['Smoothed_RSI'] < qqe_data['Trigger']) & (qqe_data['Smoothed_RSI'].shift(1) >= qqe_data['Trigger'].shift(1))
+
+# 計算報酬率
+initial_cash = 10000
+cash = initial_cash
+position = 0  # 持倉
+buy_price = 0  # 買入價格
+stop_loss_price = 0  # 止損價
+
+for i in range(len(qqe_data)):
+    if buy_signals.iloc[i]:
+        if cash > 0:  # 只有在沒有持倉時才買入
+            buy_price = qqe_data['Close'].iloc[i]
+            stop_loss_price = buy_price - 2 * qqe_data['ATR'].iloc[i]  # 設置止損價為買入價減去2倍的ATR
+            position = cash / buy_price
+            cash = 0
+            print(f"Buy at {qqe_data.index[i]}: ${buy_price:.4f}, Stop Loss at: ${stop_loss_price:.4f}")
+    elif sell_signals.iloc[i]:
+        if position > 0:  # 只有在有持倉時才賣出
+            cash = position * qqe_data['Close'].iloc[i]
+            position = 0
+            print(f"Sell at {qqe_data.index[i]}: ${qqe_data['Close'].iloc[i]:.4f}")
+    elif position > 0 and qqe_data['Close'].iloc[i] < stop_loss_price:
+        # 如果持倉且價格低於止損價，賣出
+        cash = position * qqe_data['Close'].iloc[i]
+        position = 0
+        print(f"Stop Loss at {qqe_data.index[i]}: ${qqe_data['Close'].iloc[i]:.4f}")
+
+# 如果最後有持倉，按最後一天的價格賣出
+if position > 0:
+    cash = position * qqe_data['Close'].iloc[-1]
+    position = 0
+    print(f"Sell at {qqe_data.index[-1]}: ${qqe_data['Close'].iloc[-1]:.4f}")
+
+# 計算最終報酬率
+total_return = (cash - initial_cash) / initial_cash * 100
+print(f"總報酬率: {total_return:.2f}%")
+
+# 繪製圖表
+plt.figure(figsize=(14, 8))
+
+# 繪製收盤價及買賣點
+plt.subplot(2, 1, 1)
+plt.plot(qqe_data['Close'], label='Close Price')
+plt.plot(qqe_data.loc[buy_signals].index, qqe_data['Close'][buy_signals], '^', markersize=10, color='g', label='Buy Signal')
+plt.plot(qqe_data.loc[sell_signals].index, qqe_data['Close'][sell_signals], 'v', markersize=10, color='r', label='Sell Signal')
+plt.title('DOGE-USD Close Price with Buy/Sell Signals')
+plt.legend()
+
+# 繪製QQE指標
+plt.subplot(2, 1, 2)
+plt.plot(qqe_data['RSI'], label='RSI')
+plt.plot(qqe_data['Smoothed_RSI'], label='Smoothed RSI')
+plt.plot(qqe_data['Trigger'], label='Trigger Line')
+plt.title('QQE Indicator')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
